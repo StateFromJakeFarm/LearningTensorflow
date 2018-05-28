@@ -63,6 +63,7 @@ def rnn_step(previous_hidden_state, x):
 # Place time as first dimension so that tf.scan() can work as intended
 processed_input = tf.transpose(_inputs, perm=[1, 0, 2])
 
+initial_hidden = tf.zeros([batch_size, hidden_layer_size])
 # Get all state vectors over time
 all_hidden_states = tf.scan(rnn_step,
                             processed_input,
@@ -92,3 +93,30 @@ with tf.name_scope('linear_layer_weights') as scope:
     # Get last output
     output = all_outputs[-1]
     tf.summary.histogram('outputs', output)
+
+with tf.name_scope('cross_entropy'):
+    cross_entropy = tf.reduce_mean(
+        tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=y))
+    tf.summary.scalar('cross_entropy', cross_entropy)
+
+with tf.name_scope('train'):
+    train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cross_entropy)
+
+with tf.name_scope('accuracy'):
+    correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(output, 1))
+    accuracy = (tf.reduce_mean(
+                    tf.cast(correct_prediction, tf.float32)))*100
+    tf.summary.scalar('accuracy', accuracy)
+
+# Merge all summaries
+merged = tf.summary.merge_all()
+
+# Get a small test set
+test_data = mnist.test.images[:batch_size].reshape( (-1, time_steps, element_size) )
+test_label = mnist.test.labls[:batch_size]
+
+with tf.Session() as sess:
+    train_writer = tf.summary.FileWriter(LOG_DIR + '/train',
+                                         graph=tf.get_default_graph())
+    test_writer = tf.summary.FileWriter(LOG_DIR + '/test',
+                                         graph=tf.get_default_graph())
