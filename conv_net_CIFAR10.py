@@ -2,7 +2,7 @@ import os
 import cPickle
 import tensorflow as tf
 import numpy as np
-import matplotlib as plt
+import matplotlib.pyplot as plt
 
 # Globals
 DATA_PATH = '/home/jakeh/repos/LearningTensorflow/cifar-10-batches-py'
@@ -31,6 +31,7 @@ def display_cifar(images, size):
     plt.show()
 
 
+# Classes to make loading CIFAR data easier
 class CifarLoader(object):
     '''Loader for CIFAR10 images'''
     def __init__(self, source_files):
