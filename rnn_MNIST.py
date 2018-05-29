@@ -1,148 +1,58 @@
 import tensorflow as tf
-
-
-# Helper funtions
-
-# This helper function, taken from the official TensorFlow documentation,
-# simply adds some ops that take care of logging summaries
-def variable_summaries(var):
-    with tf.name_scope('summaries'):
-          mean = tf.reduce_mean(var)
-          tf.summary.scalar('mean', mean)
-          with tf.name_scope('stddev'):
-              stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-          tf.summary.scalar('stddev', stddev)
-          tf.summary.scalar('max', tf.reduce_max(var))
-          tf.summary.scalar('min', tf.reduce_min(var))
-          tf.summary.histogram('histogram', var)
-
-
-# Grab MNIST
 from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets('/tmp/data/', one_hot=True)
+mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
 
-# High-level params
-element_size = 28
-time_steps = 28
-num_classes = 10
-batch_size = 128
-hidden_layer_size = 128 # Totally aribitrary
-train_steps = 3000
+element_size = 28;time_steps = 28;num_classes = 10
+batch_size = 128;hidden_layer_size = 128
 
-# Tensorboard model summary storage location
-LOG_DIR = 'logs/rnn_MNIST_with_summaries'
+_inputs = tf.placeholder(tf.float32,shape=[None, time_steps,
+                                           element_size],
+                                           name='inputs')
+y = tf.placeholder(tf.float32, shape=[None, num_classes],name='inputs')
 
-# Placeholders for inputs and labels
-_inputs = tf.placeholder(tf.float32, shape=[None, time_steps,
-                                            element_size],
-                                            name='inputs')
-y = tf.placeholder(tf.float32, shape=[None, num_classes],
-                                            name='labels')
+# TensorFlow built-in functions
+rnn_cell = tf.contrib.rnn.BasicRNNCell(hidden_layer_size)
+outputs, _ = tf.nn.dynamic_rnn(rnn_cell, _inputs, dtype=tf.float32)
 
-# Weights and bias for input and hidden layer
-with tf.name_scope('rnn_weights'):
-    with tf.name_scope('W_x'):
-        Wx = tf.Variable(tf.zeros([element_size, hidden_layer_size]))
-        variable_summaries(Wx)
-    with tf.name_scope('W_h'):
-        Wh = tf.Variable(tf.zeros([hidden_layer_size, hidden_layer_size]))
-        variable_summaries(Wh)
-    with tf.name_scope('Bias'):
-        b_rnn = tf.Variable(tf.zeros([hidden_layer_size]))
-        variable_summaries(b_rnn)
+Wl = tf.Variable(tf.truncated_normal([hidden_layer_size, num_classes],
+                                     mean=0,stddev=.01))
+bl = tf.Variable(tf.truncated_normal([num_classes],mean=0,stddev=.01))
 
-# Implement the basic RNN step
-def rnn_step(previous_hidden_state, x):
-    return tf.tanh(
-    tf.matmul(previous_hidden_state, Wh) +
-    tf.matmul(x, Wx) + b_rnn)
+def get_linear_layer(vector):
+    return tf.matmul(vector, Wl) + bl
 
-# Place time as first dimension so that tf.scan() can work as intended
-processed_input = tf.transpose(_inputs, perm=[1, 0, 2])
+last_rnn_output = outputs[:,-1,:]
+final_output = get_linear_layer(last_rnn_output)
 
-initial_hidden = tf.zeros([batch_size, hidden_layer_size])
-# Get all state vectors over time
-all_hidden_states = tf.scan(rnn_step,
-                            processed_input,
-                            initializer=initial_hidden,
-                            name='states')
+softmax = tf.nn.softmax_cross_entropy_with_logits(logits=final_output,
+                                                  labels=y)
+cross_entropy = tf.reduce_mean(softmax)
+train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cross_entropy)
 
-# Weights for output layers
-with tf.name_scope('linear_layer_weights') as scope:
-    with tf.name_scope('W_linear'):
-        Wl = tf.Variable(tf.truncated_normal([hidden_layer_size,
-                                              num_classes],
-                                              mean=0, stddev=0.01))
-        variable_summaries(Wl)
-    with tf.name_scope('Bias_linear'):
-        bl = tf.Variable(tf.truncated_normal([num_classes],
-                                             mean=0, stddev=0.01))
-        variable_summaries(bl)
+correct_prediction = tf.equal(tf.argmax(y,1), tf.argmax(final_output,1))
+accuracy = (tf.reduce_mean(tf.cast(correct_prediction, tf.float32)))*100
 
-# Apply linear layer to state vector
-def get_linear_layer(hidden_state):
-    return tf.matmul(hidden_state, Wl) + bl
+sess=tf.InteractiveSession()
+sess.run(tf.global_variables_initializer())
 
-with tf.name_scope('linear_layer_weights') as scope:
-    # Iterate across time, apply linear layer to all RNN outputs
-    all_outputs = tf.map_fn(get_linear_layer, all_hidden_states)
-
-    # Get last output
-    output = all_outputs[-1]
-    tf.summary.histogram('outputs', output)
-
-with tf.name_scope('cross_entropy'):
-    cross_entropy = tf.reduce_mean(
-        tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=y))
-    tf.summary.scalar('cross_entropy', cross_entropy)
-
-with tf.name_scope('train'):
-    train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cross_entropy)
-
-with tf.name_scope('accuracy'):
-    correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(output, 1))
-    accuracy = (tf.reduce_mean(
-                    tf.cast(correct_prediction, tf.float32)))*100
-    tf.summary.scalar('accuracy', accuracy)
-
-# Merge all summaries
-merged = tf.summary.merge_all()
-
-# Get a small test set
-test_data = mnist.test.images[:batch_size].reshape( (-1, time_steps, element_size) )
+test_data = mnist.test.images[:batch_size].reshape((-1,
+                                            time_steps, element_size))
 test_label = mnist.test.labels[:batch_size]
+  
+for i in range(3001):
 
-with tf.Session() as sess:
-    train_writer = tf.summary.FileWriter(LOG_DIR + '/train',
-                                         graph=tf.get_default_graph())
-    test_writer = tf.summary.FileWriter(LOG_DIR + '/test',
-                                         graph=tf.get_default_graph())
+       batch_x, batch_y = mnist.train.next_batch(batch_size)
+       batch_x = batch_x.reshape((batch_size, time_steps, element_size))
+       sess.run(train_step,feed_dict={_inputs:batch_x,
+                                      y:batch_y})
+       if i % 1000 == 0:
+            acc = sess.run(accuracy, feed_dict={_inputs: batch_x,
+                                                y: batch_y})
+            loss = sess.run(cross_entropy,feed_dict={_inputs:batch_x,
+                                                     y:batch_y})
+            print ("Iter " + str(i) + ", Minibatch Loss= " + \
+                  "{:.6f}".format(loss) + ", Training Accuracy= " + \
+                  "{:.5f}".format(acc))   
 
-    sess.run(tf.global_variables_initializer())
-
-    for i in range(train_steps):
-        batch_x, batch_y = mnist.train.next_batch(batch_size)
-        # Reshape input data to batches of sequences
-        batch_x = batch_x.reshape( (batch_size, time_steps, element_size) )
-
-        summary, _ = sess.run([merged, train_step], feed_dict={_inputs:batch_x, y:batch_y})
-
-        # Add to summaries
-        train_writer.add_summary(summary, i)
-
-        if i % 1000 == 0:
-            acc, loss = sess.run([accuracy, cross_entropy],
-                                 feed_dict={_inputs: batch_x,
-                                            y: batch_y})
-            print('Iter ' + str(i) + ', Minibatch Loss = ' + \
-                  '{:.6f}'.format(loss) + ', Training Accuracy = ' + \
-                  '{:.5f}'.format(acc))
-
-        if i % 10 == 0:
-            summary, acc = sess.run([merged, accuracy],
-                                    feed_dict={_inputs: test_data,
-                                               y: test_label})
-
-    test_acc = sess.run(accuracy, feed_dict={_inputs: test_data,
-                                             y: test_label})
-    print('Final test accuracy: ' + str(test_acc))
+print ("Testing Accuracy:", 
+    sess.run(accuracy, feed_dict={_inputs: test_data, y: test_label}))
