@@ -71,7 +71,7 @@ def get_sentence_batch(batch_size, data_x, data_y, data_seqlens):
     instance_indices = list(range(len(data_x)))
     np.random.shuffle(instance_indices)
     batch = instance_indices[:batch_size]
-    x = [[word_to_ID[word] for word in data_x[i].lower().split()] for i in 
+    x = [[word_to_ID[word] for word in data_x[i].split()] for i in 
          batch]
     y = [data_y[i] for i in batch]
     seqlens = [data_seqlens[i] for i in batch]
@@ -90,3 +90,58 @@ with tf.name_scope('embeddings'):
         tf.random_uniform([vocabulary_size, embedding_dimension], -1, 1),
         name='embedding')
     embed = tf.nn.embedding_lookup(embeddings, _inputs)
+
+# Create LSTM cells
+with tf.variable_scope('lstm'):
+    lstm_cell = tf.contrib.rnn.BasicLSTMCell(hidden_layer_size,
+                                             forget_bias=1.0)
+    outputs, states = tf.nn.dynamic_rnn(lstm_cell, embed,
+                                        sequence_length=_seqlens,
+                                        dtype=tf.float32)
+
+weights = {
+    'linear_layer': tf.Variable(tf.truncated_normal([hidden_layer_size,
+                                                     num_classes],
+                                                    mean=0, stddev=0.01))
+}
+biases = {
+    'linear_layer': tf.Variable(tf.truncated_normal([num_classes],
+                                                    mean=0, stddev=0.01))
+}
+
+# Get last relevant output and feed to linear layer
+final_output = tf.matmul(states[-1], weights['linear_layer']) + \
+               biases['linear_layer']
+softmax = tf.nn.softmax_cross_entropy_with_logits(logits=final_output,
+                                                  labels=_labels)
+cross_entropy = tf.reduce_mean(softmax)
+
+# Setup training
+train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cross_entropy)
+correct_prediction = tf.equal(tf.argmax(_labels, 1), tf.argmax(final_output, 1))
+accuracy = (tf.reduce_mean(tf.cast(correct_prediction, tf.float32)))*100
+
+# Train network
+with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+
+    for step in range(100):
+        x_batch, y_batch, seqlen_batch = get_sentence_batch(batch_size,
+                                                            train_x, train_y,
+                                                            train_seqlens)
+
+        sess.run(train_step, feed_dict={_inputs: x_batch,
+                                       _labels: y_batch,
+                                       _seqlens: seqlen_batch})
+
+        # Test against test set every 100 iterations
+        if step > 0 and step % 10 == 0:
+            x_test, y_test, seqlen_test = get_sentence_batch(batch_size,
+                                                             test_x, test_y,
+                                                             test_seqlens)
+
+            test_pred, test_acc = sess.run([tf.argmax(final_output, 1), accuracy],
+                                           feed_dict={_inputs: x_test,
+                                                      _labels: y_test,
+                                                      _seqlens: seqlen_test})
+            print("Step {}: {:.3f}".format(step, test_acc))
